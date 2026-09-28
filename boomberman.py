@@ -1,69 +1,72 @@
+ # boombeman.py
 import sys
 import pygame
+import configuracio
+import mapas
 
 pygame.init()
 
-# 1. Configuración de la pantalla y entorno
-pantalla = pygame.display.set_mode((800, 600))
-pygame.display.set_caption("Simulación de pantalla - Unidad 2")
+pantalla = pygame.display.set_mode((configuracio.ANCHO, configuracio.ALTO))
+pygame.display.set_caption("Bomberman - Multinivel con Paletas Dinámicas")
 
 reloj = pygame.time.Clock()
 ejecutando = True
 
-# 2. Matriz completa del mapa (0 = Suelo, 1 = Fijo, 2 = Destruible)
-# Se escribe en una sola lista plana para asegurar el formato sin errores
-mapa_datos = [
-    1,1,1,1,1,1,1,1,1,1,1,1,1,
-    1,0,0,0,0,2,2,2,0,0,0,0,1,
-    1,0,1,0,1,0,1,0,1,0,1,0,1,
-    1,2,0,2,2,2,2,2,2,2,0,2,1,
-    1,0,1,0,1,2,1,2,1,0,1,0,1,
-    1,2,0,2,2,2,0,2,2,2,0,2,1,
-    1,0,1,0,1,2,1,2,1,0,1,0,1,
-    1,0,0,2,2,2,2,2,2,2,0,0,1,
-    1,0,1,0,1,0,1,0,1,0,1,0,1,
-    1,1,1,1,1,1,1,1,1,1,1,1,1
-]
-
-# Conversión de la lista plana en una cuadrícula real de 10 filas x 13 columnas
-COLUMNAS = 13
-mapa = [mapa_datos[i:i + COLUMNAS] for i in range(0, len(mapa_datos), COLUMNAS)]
-
-# Tamaño de cada bloque en píxeles
-TAMANO_BLOQUE = 60
-
-# 3. Definición de colores
-COLOR_SUELO = (166, 132, 128)        # Fondo original tuyo
-COLOR_FIJO = (44, 62, 80)            # Gris oscuro para bloques fijos
-COLOR_DESTRUIBLE = (229, 152, 102)    # Naranja/Marrón para cajas
+# Estado dinámico inicial con las nuevas variables independientes
+mapa_actual = mapas.MAPA_1
+color_suelo_actual = configuracio.SUELO_M1
+color_fijo_actual = configuracio.FIJO_M1
+color_destruible_actual = configuracio.DESTRUIBLE_M1
 
 while ejecutando:
     for evento in pygame.event.get():
         if evento.type == pygame.QUIT:
             ejecutando = False
             
-    # Fondo de la pantalla
-    pantalla.fill(COLOR_SUELO)
+        if evento.type == pygame.KEYDOWN:
+            if evento.key == pygame.K_1:
+                mapa_actual = mapas.MAPA_1
+                color_suelo_actual = configuracio.SUELO_M1
+                color_fijo_actual = configuracio.FIJO_M1
+                color_destruible_actual = configuracio.DESTRUIBLE_M1
+                print("[SISTEMA] Conmutado a: Mapa 1 (Clásico)")
+            elif evento.key == pygame.K_2:
+                mapa_actual = mapas.MAPA_2
+                color_suelo_actual = configuracio.SUELO_M2
+                color_fijo_actual = configuracio.FIJO_M2
+                color_destruible_actual = configuracio.DESTRUIBLE_M2
+                print("[SISTEMA] Conmutado a: Mapa 2 (Mundo de Fuego)")
+            elif evento.key == pygame.K_3:
+                mapa_actual = mapas.MAPA_3
+                color_suelo_actual = configuracio.SUELO_M3
+                color_fijo_actual = configuracio.FIJO_M3
+                color_destruible_actual = configuracio.DESTRUIBLE_M3
+                print("[SISTEMA] Conmutado a: Mapa 3 (Mundo de Bosque)")
+            
+    # Dibujamos usando los colores actuales del estado mutante
+    pantalla.fill(color_suelo_actual)
     
-    # 4. Dibujar las figuras del mapa usando filas y columnas
-    for fila_idx, fila in enumerate(mapa):
+    margen_x = (configuracio.ANCHO - (configuracio.COLUMNAS * configuracio.TAMANO_BLOQUE)) // 2
+    margen_y = (configuracio.ALTO - (len(mapa_actual) * configuracio.TAMANO_BLOQUE)) // 2
+    
+    for fila_idx, fila in enumerate(mapa_actual):
         for col_idx, casilla in enumerate(fila):
-            x = col_idx * TAMANO_BLOQUE
-            y = fila_idx * TAMANO_BLOQUE
+            x = (col_idx * configuracio.TAMANO_BLOQUE) + margen_x
+            y = (fila_idx * configuracio.TAMANO_BLOQUE) + margen_y
             
             if casilla == 1:
-                # Mosaico 1: Bloque Fijo (Gris con borde negro)
-                pygame.draw.rect(pantalla, COLOR_FIJO, (x, y, TAMANO_BLOQUE, TAMANO_BLOQUE))
-                pygame.draw.rect(pantalla, (0, 0, 0), (x, y, TAMANO_BLOQUE, TAMANO_BLOQUE), 2)
+                pygame.draw.rect(pantalla, color_fijo_actual, (x, y, configuracio.TAMANO_BLOQUE, configuracio.TAMANO_BLOQUE))
+                pygame.draw.rect(pantalla, configuracio.COLOR_BORDE_NEGRO, (x, y, configuracio.TAMANO_BLOQUE, configuracio.TAMANO_BLOQUE), 2)
             elif casilla == 2:
-                # Mosaico 2: Bloque Destruible (Caja con una cruz decorativa)
-                pygame.draw.rect(pantalla, COLOR_DESTRUIBLE, (x, y, TAMANO_BLOQUE, TAMANO_BLOQUE))
-                pygame.draw.rect(pantalla, (110, 44, 2), (x, y, TAMANO_BLOQUE, TAMANO_BLOQUE), 2)
-                pygame.draw.line(pantalla, (110, 44, 2), (x, y), (x + TAMANO_BLOQUE, y + TAMANO_BLOQUE), 2)
-                pygame.draw.line(pantalla, (110, 44, 2), (x + TAMANO_BLOQUE, y), (x, y + TAMANO_BLOQUE), 2)
+                pygame.draw.rect(pantalla, color_destruible_actual, (x, y, configuracio.TAMANO_BLOQUE, configuracio.TAMANO_BLOQUE))
+                pygame.draw.rect(pantalla, configuracio.COLOR_LINEA_CAJA, (x, y, configuracio.TAMANO_BLOQUE, configuracio.TAMANO_BLOQUE), 2)
+                pygame.draw.line(pantalla, configuracio.COLOR_LINEA_CAJA, (x, y), (x + configuracio.TAMANO_BLOQUE, y + configuracio.TAMANO_BLOQUE), 2)
+                pygame.draw.line(pantalla, configuracio.COLOR_LINEA_CAJA, (x + configuracio.TAMANO_BLOQUE, y), (x, y + configuracio.TAMANO_BLOQUE), 2)
 
     pygame.display.flip()
-    reloj.tick(60)
+    reloj.tick(configuracio.FPS)
 
 pygame.quit()
 sys.exit()
+
+

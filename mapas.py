@@ -44,8 +44,10 @@ _m3 = (
 )
 
 def _convertir_a_matriz(cadena_mapa):
-    lista_enteros = [int(caracter) for caracter in cadena_mapa]
-    return [lista_enteros[i:i + configuracio.COLUMNAS] for i in range(0, len(lista_enteros), configuracio.COLUMNAS)]
+    lista_enteros = [int(caracter) 
+                     for caracter in cadena_mapa]
+    return [lista_enteros[i:i + configuracio.COLUMNAS] 
+    for i in range(0, len(lista_enteros), configuracio.COLUMNAS)]
 
 MAPA_1 = _convertir_a_matriz(_m1)
 MAPA_2 = _convertir_a_matriz(_m2)

@@ -1,7 +1,6 @@
- # mapas.py
+# mapas.py
 import configuracio
 
-# MAPA 1: Tu diseño simétrico original
 _m1 = (
     "1111111111111"
     "1000022200001"
@@ -15,7 +14,6 @@ _m1 = (
     "1111111111111"
 )
 
-# MAPA 2: Diseño tipo "Anillo Central"
 _m2 = (
     "1111111111111"
     "1002222222001"
@@ -29,7 +27,6 @@ _m2 = (
     "1111111111111"
 )
 
-# MAPA 3: Diseño tipo "Laberinto Vertical"
 _m3 = (
     "1111111111111"
     "1000200020001"
@@ -44,12 +41,10 @@ _m3 = (
 )
 
 def _convertir_a_matriz(cadena_mapa):
-    lista_enteros = [int(caracter) 
-                     for caracter in cadena_mapa]
+    lista_enteros = [int(caracter) for caracter in cadena_mapa]
     return [lista_enteros[i:i + configuracio.COLUMNAS] 
-    for i in range(0, len(lista_enteros), configuracio.COLUMNAS)]
+            for i in range(0, len(lista_enteros), configuracio.COLUMNAS)]
 
 MAPA_1 = _convertir_a_matriz(_m1)
 MAPA_2 = _convertir_a_matriz(_m2)
 MAPA_3 = _convertir_a_matriz(_m3)
-

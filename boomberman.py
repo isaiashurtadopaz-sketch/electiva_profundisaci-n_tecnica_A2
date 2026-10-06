@@ -1,4 +1,4 @@
-# boomberman.py
+ # boomberman_2.py
 import sys
 import random
 import pygame
@@ -13,9 +13,19 @@ pygame.font.init()
 
 pantalla_completa = False
 
-# Habilitamos RESIZABLE para permitir maximizar y estirar la ventana con el botón
-pantalla = pygame.display.set_mode((configuracio.ANCHO, configuracio.ALTO), pygame.RESIZABLE)
+# Dimensiones base del juego (Espacio de coordenadas interno fijo)
+ANCHO_BASE = getattr(configuracio, "ANCHO", 800)
+ALTO_BASE = getattr(configuracio, "ALTO", 600)
+
+# Dimensiones iniciales de la ventana física
+ancho_ventana, alto_ventana = ANCHO_BASE, ALTO_BASE
+
+# Habilitamos RESIZABLE para permitir maximizar y estirar la ventana
+pantalla = pygame.display.set_mode((ancho_ventana, alto_ventana), pygame.RESIZABLE)
 pygame.display.set_caption("Bomberman - NES Style")
+
+# Superficie interna donde dibujamos todo a resolución fija antes de escalar
+superficie_juego = pygame.Surface((ANCHO_BASE, ALTO_BASE))
 
 reloj = pygame.time.Clock()
 
@@ -64,9 +74,51 @@ try:
     FRAME_BOMBA = matriz_sprites[3][0]
     
     sprites_cargados = True
-    print("¡Sprites recortados correctamente!")
+    print("¡Sprites del jugador recortados correctamente!")
 except Exception as e:
     print(f"Nota: Usando cuadros de color para el personaje ({e})")
+
+# --- CARGA DEL SPRITE ÚNICO DEL ENEMIGO NIVEL 1 ---
+sprites_enemigo_n1_cargados = False
+dict_sprites_enemigo_n1 = {}
+
+try:
+    img_enemigo_raw = pygame.image.load("enemigo1 (1).png")
+    if img_enemigo_raw.get_alpha() is not None:
+        img_enemigo_raw = img_enemigo_raw.convert_alpha()
+    else:
+        img_enemigo_raw = img_enemigo_raw.convert()
+        img_enemigo_raw.set_colorkey((255, 255, 255))
+        
+    tam_e = getattr(configuracio, "TAMANO_ENEMIGO", 35)
+
+    # Eliminar bordes transparentes/blancos vacíos alrededor del dibujo
+    rect_limpio = img_enemigo_raw.get_bounding_rect()
+    if rect_limpio.width > 0 and rect_limpio.height > 0:
+        img_enemigo_raw = img_enemigo_raw.subsurface(rect_limpio)
+        
+    # Escalado manteniendo el aspecto proporcional original
+    w_orig, h_orig = img_enemigo_raw.get_width(), img_enemigo_raw.get_height()
+    ratio = min(tam_e / w_orig, tam_e / h_orig)
+    nw, nh = max(1, int(w_orig * ratio)), max(1, int(h_orig * ratio))
+    
+    img_esc = pygame.transform.scale(img_enemigo_raw, (nw, nh))
+    
+    # Crear un lienzo de (tam_e, tam_e) con fondo transparente y centrar la imagen
+    surf_canvas = pygame.Surface((tam_e, tam_e), pygame.SRCALPHA)
+    offset_x = (tam_e - nw) // 2
+    offset_y = (tam_e - nh) // 2
+    surf_canvas.blit(img_esc, (offset_x, offset_y))
+
+    # Asignar la imagen a todas las direcciones posibles
+    for dir_key in ["IZQUIERDA", "DERECHA", "ABAJO", "ARRIBA"]:
+        dict_sprites_enemigo_n1[dir_key] = surf_canvas
+
+    sprites_enemigo_n1_cargados = True
+    print("¡Sprite individual del enemigo cargado y ajustado con éxito!")
+
+except Exception as e:
+    print(f"Error cargando enemigo1 (1).png: {e}")
 
 # --- CARGA DE TEXTURAS DEL MAPA ---
 texturas_cargadas = False
@@ -131,11 +183,11 @@ def obtener_rect_casilla(fila, col, total_filas, total_cols):
     total_filas = max(1, total_filas)
     total_cols = max(1, total_cols)
     
-    tamano_casilla = min(configuracio.ANCHO // total_cols, configuracio.ALTO // total_filas)
+    tamano_casilla = min(ANCHO_BASE // total_cols, ALTO_BASE // total_filas)
     tamano_casilla = max(10, tamano_casilla)
     
-    offset_x = (configuracio.ANCHO - (total_cols * tamano_casilla)) // 2
-    offset_y = (configuracio.ALTO - (total_filas * tamano_casilla)) // 2
+    offset_x = (ANCHO_BASE - (total_cols * tamano_casilla)) // 2
+    offset_y = (ALTO_BASE - (total_filas * tamano_casilla)) // 2
     
     x = offset_x + col * tamano_casilla
     y = offset_y + fila * tamano_casilla
@@ -159,8 +211,7 @@ def crear_enemigos(mapa, cantidad):
     posiciones = random.sample(casillas_libres, min(cantidad, len(casillas_libres)))
     direcciones_posibles = [(-1, 0), (1, 0), (0, -1), (0, 1)]
     
-    # Tamaño del enemigo (puedes cambiarlo desde configuracio.py o aquí)
-    tam_enemigo = getattr(configuracio, "TAMANO_ENEMIGO", 32)
+    tam_enemigo = getattr(configuracio, "TAMANO_ENEMIGO", 35)
     vel_enemigo = getattr(configuracio, "VELOCIDAD_ENEMIGO", 2)
 
     for f, c in posiciones:
@@ -211,32 +262,42 @@ def cargar_nivel(num_nivel):
 # ==============================================================================
 while ejecutando:
     tiempo_actual = pygame.time.get_ticks()
-    pos_raton = pygame.mouse.get_pos()
+    pos_raton_real = pygame.mouse.get_pos()
+
+    # --- CÁLCULO DE ESCALA Y MARGENES PARA MANTENER PROPORCIONES ---
+    escala_x = ancho_ventana / ANCHO_BASE
+    escala_y = alto_ventana / ALTO_BASE
+    escala = min(escala_x, escala_y) if min(escala_x, escala_y) > 0 else 1.0
+
+    nuevo_ancho = int(ANCHO_BASE * escala)
+    nuevo_alto = int(ALTO_BASE * escala)
+
+    offset_x_win = (ancho_ventana - nuevo_ancho) // 2
+    offset_y_win = (alto_ventana - nuevo_alto) // 2
+
+    pos_raton_x = int((pos_raton_real[0] - offset_x_win) / escala) if escala > 0 else 0
+    pos_raton_y = int((pos_raton_real[1] - offset_y_win) / escala) if escala > 0 else 0
+    pos_raton = (pos_raton_x, pos_raton_y)
 
     for evento in pygame.event.get():
         if evento.type == pygame.QUIT:
             ejecutando = False
 
-        # --- EVENTO DE MAXIMIZAR Y REDIMENSIONAR VENTANA ---
         if evento.type == pygame.VIDEORESIZE:
-            configuracio.ANCHO, configuracio.ALTO = evento.w, evento.h
-            pantalla = pygame.display.set_mode((evento.w, evento.h), pygame.RESIZABLE)
+            ancho_ventana, alto_ventana = evento.w, evento.h
+            pantalla = pygame.display.set_mode((ancho_ventana, alto_ventana), pygame.RESIZABLE)
 
-        # --- TECLAS GLOBALES (MINIMIZAR Y PANTALLA COMPLETA) ---
         if evento.type == pygame.KEYDOWN:
-            # Tecla ESC: Minimiza la ventana a la barra de tareas
             if evento.key == pygame.K_ESCAPE:
                 pygame.display.iconify()
 
-            # Tecla F11: Alterna pantalla completa
             if evento.key == pygame.K_F11:
                 pantalla_completa = not pantalla_completa
                 if pantalla_completa:
-                    pantalla = pygame.display.set_mode((configuracio.ANCHO, configuracio.ALTO), pygame.FULLSCREEN | pygame.SCALED)
+                    pantalla = pygame.display.set_mode((ancho_ventana, alto_ventana), pygame.FULLSCREEN | pygame.SCALED)
                 else:
-                    pantalla = pygame.display.set_mode((configuracio.ANCHO, configuracio.ALTO), pygame.RESIZABLE)
+                    pantalla = pygame.display.set_mode((ancho_ventana, alto_ventana), pygame.RESIZABLE)
 
-        # --- EVENTOS EN EL MENÚ ---
         if estado_juego == "MENU":
             if evento.type == pygame.MOUSEBUTTONDOWN:
                 if rect_boton_inicio.collidepoint(pos_raton):
@@ -250,7 +311,6 @@ while ejecutando:
                     cargar_nivel(indice_nivel)
                     estado_juego = "JUGANDO"
 
-        # --- EVENTOS EN EL JUEGO ---
         elif estado_juego == "JUGANDO" and evento.type == pygame.KEYDOWN:
             if evento.key == pygame.K_r and not jugador_vivo:
                 cargar_nivel(indice_nivel)
@@ -267,9 +327,9 @@ while ejecutando:
                 total_filas = len(mapa_actual)
                 total_cols = len(mapa_actual[0])
                 
-                tamano_casilla = min(configuracio.ANCHO // total_cols, configuracio.ALTO // total_filas)
-                offset_x = (configuracio.ANCHO - (total_cols * tamano_casilla)) // 2
-                offset_y = (configuracio.ALTO - (total_filas * tamano_casilla)) // 2
+                tamano_casilla = min(ANCHO_BASE // total_cols, ALTO_BASE // total_filas)
+                offset_x = (ANCHO_BASE - (total_cols * tamano_casilla)) // 2
+                offset_y = (ALTO_BASE - (total_filas * tamano_casilla)) // 2
                 
                 col = int((jugador_rect.centerx - offset_x) // tamano_casilla)
                 fila = int((jugador_rect.centery - offset_y) // tamano_casilla)
@@ -288,36 +348,35 @@ while ejecutando:
                     tiempo_anim_bomba = tiempo_actual + 300
 
     # ==============================================================================
-    # LÓGICA Y DIBUJADO DE PANTALLA
+    # LÓGICA Y DIBUJADO EN SUPERFICIE INTERNA
     # ==============================================================================
     if estado_juego == "MENU":
-        pantalla.fill((25, 30, 50))
+        superficie_juego.fill((25, 30, 50))
         
-        # Centrado dinámico del botón según el tamaño de ventana
-        rect_boton_inicio.center = (configuracio.ANCHO // 2, configuracio.ALTO // 2)
+        rect_boton_inicio.center = (ANCHO_BASE // 2, ALTO_BASE // 2)
         
         txt_sombra = fuente_titulo.render("BOMBERMAN", True, (0, 0, 0))
         txt_titulo = fuente_titulo.render("BOMBERMAN", True, (241, 196, 15))
-        pantalla.blit(txt_sombra, txt_sombra.get_rect(center=(configuracio.ANCHO // 2 + 3, 113)))
-        pantalla.blit(txt_titulo, txt_titulo.get_rect(center=(configuracio.ANCHO // 2, 110)))
+        superficie_juego.blit(txt_sombra, txt_sombra.get_rect(center=(ANCHO_BASE // 2 + 3, 113)))
+        superficie_juego.blit(txt_titulo, txt_titulo.get_rect(center=(ANCHO_BASE // 2, 110)))
         
         hover = rect_boton_inicio.collidepoint(pos_raton)
         color_boton = (230, 126, 34) if hover else (211, 84, 0)
         color_borde = (255, 255, 255) if hover else (241, 196, 15)
 
-        pygame.draw.rect(pantalla, color_boton, rect_boton_inicio, border_radius=12)
-        pygame.draw.rect(pantalla, color_borde, rect_boton_inicio, 3, border_radius=12)
+        pygame.draw.rect(superficie_juego, color_boton, rect_boton_inicio, border_radius=12)
+        pygame.draw.rect(superficie_juego, color_borde, rect_boton_inicio, 3, border_radius=12)
 
         txt_boton = fuente_subtitulo.render("INICIAR JUEGO", True, (255, 255, 255))
-        pantalla.blit(txt_boton, txt_boton.get_rect(center=rect_boton_inicio.center))
+        superficie_juego.blit(txt_boton, txt_boton.get_rect(center=rect_boton_inicio.center))
 
         txt_tecla = fuente_subtitulo.render("Presiona ENTER, ESPACIO o Clic para empezar", True, (46, 204, 113))
-        pantalla.blit(txt_tecla, txt_tecla.get_rect(center=(configuracio.ANCHO // 2, configuracio.ALTO // 2 + 80)))
+        superficie_juego.blit(txt_tecla, txt_tecla.get_rect(center=(ANCHO_BASE // 2, ALTO_BASE // 2 + 80)))
 
         ctrl_1 = fuente_juego.render("Controles: WASD = Moverse | ESPACIO = Bomba", True, (200, 210, 225))
         ctrl_2 = fuente_juego.render("ESC = Minimizar | F11 = Pantalla Completa | R = Reiniciar", True, (200, 210, 225))
-        pantalla.blit(ctrl_1, ctrl_1.get_rect(center=(configuracio.ANCHO // 2, configuracio.ALTO - 70)))
-        pantalla.blit(ctrl_2, ctrl_2.get_rect(center=(configuracio.ANCHO // 2, configuracio.ALTO - 35)))
+        superficie_juego.blit(ctrl_1, ctrl_1.get_rect(center=(ANCHO_BASE // 2, ALTO_BASE - 70)))
+        superficie_juego.blit(ctrl_2, ctrl_2.get_rect(center=(ANCHO_BASE // 2, ALTO_BASE - 35)))
 
     elif estado_juego == "JUGANDO":
         total_filas = len(mapa_actual)
@@ -436,13 +495,12 @@ while ejecutando:
         if jugador_vivo and len(enemigos) == 0:
             nivel_completado = True
 
-        pantalla.fill((20, 24, 32))
+        superficie_juego.fill((20, 24, 32))
         
-        tamano_casilla = min(configuracio.ANCHO // total_cols, configuracio.ALTO // total_filas)
-        offset_x = (configuracio.ANCHO - (total_cols * tamano_casilla)) // 2
-        offset_y = (configuracio.ALTO - (total_filas * tamano_casilla)) // 2
+        tamano_casilla = min(ANCHO_BASE // total_cols, ALTO_BASE // total_filas)
+        offset_x = (ANCHO_BASE - (total_cols * tamano_casilla)) // 2
+        offset_y = (ALTO_BASE - (total_filas * tamano_casilla)) // 2
         
-        # --- ESCALADO Y RENDERIZADO DE TEXTURAS / COLORES ---
         if texturas_cargadas:
             if dict_texturas_escaladas.get("tamano") != tamano_casilla:
                 dict_texturas_escaladas = {
@@ -453,7 +511,7 @@ while ejecutando:
                 }
         else:
             rect_tablero = pygame.Rect(offset_x, offset_y, total_cols * tamano_casilla, total_filas * tamano_casilla)
-            pygame.draw.rect(pantalla, color_suelo_actual, rect_tablero)
+            pygame.draw.rect(superficie_juego, color_suelo_actual, rect_tablero)
 
         color_fuego = getattr(configuracio, "COLOR_FUEGO", (231, 76, 60))
         color_bomba = getattr(configuracio, "COLOR_BOMBA", (0, 0, 0))
@@ -465,28 +523,38 @@ while ejecutando:
                 rect = obtener_rect_casilla(fila_idx, col_idx, total_filas, total_cols)
                 
                 if texturas_cargadas:
-                    pantalla.blit(dict_texturas_escaladas["suelo"], rect)
+                    superficie_juego.blit(dict_texturas_escaladas["suelo"], rect)
                     if casilla == 1:
-                        pantalla.blit(dict_texturas_escaladas["fijo"], rect)
+                        superficie_juego.blit(dict_texturas_escaladas["fijo"], rect)
                     elif casilla == 2:
-                        pantalla.blit(dict_texturas_escaladas["destruible"], rect)
+                        superficie_juego.blit(dict_texturas_escaladas["destruible"], rect)
                 else:
                     if casilla == 1:
-                        pygame.draw.rect(pantalla, color_fijo_actual, rect)
-                        pygame.draw.rect(pantalla, (0, 0, 0), rect, 2)
+                        pygame.draw.rect(superficie_juego, color_fijo_actual, rect)
+                        pygame.draw.rect(superficie_juego, (0, 0, 0), rect, 2)
                     elif casilla == 2:
-                        pygame.draw.rect(pantalla, color_destruible_actual, rect)
-                        pygame.draw.rect(pantalla, (100, 50, 20), rect, 2)
+                        pygame.draw.rect(superficie_juego, color_destruible_actual, rect)
+                        pygame.draw.rect(superficie_juego, (100, 50, 20), rect, 2)
 
         for exp in explosiones:
             for llama in exp['llamas']:
-                pygame.draw.rect(pantalla, color_fuego, llama)
+                pygame.draw.rect(superficie_juego, color_fuego, llama)
 
         for bomba in bombas:
-            pygame.draw.circle(pantalla, color_bomba, bomba['rect'].center, min(bomba['rect'].width, bomba['rect'].height) // 3)
+            pygame.draw.circle(superficie_juego, color_bomba, bomba['rect'].center, min(bomba['rect'].width, bomba['rect'].height) // 3)
 
+        # --- DIBUJO DE ENEMIGOS ---
         for enemigo in enemigos:
-            pygame.draw.rect(pantalla, color_enemigo, enemigo['rect'])
+            if abs(enemigo['dx']) >= abs(enemigo['dy']):
+                dir_e = "DERECHA" if enemigo['dx'] > 0 else "IZQUIERDA"
+            else:
+                dir_e = "ABAJO" if enemigo['dy'] > 0 else "ARRIBA"
+
+            if sprites_enemigo_n1_cargados and indice_nivel == 0:
+                sprite_enemigo = dict_sprites_enemigo_n1.get(dir_e, dict_sprites_enemigo_n1.get("ABAJO"))
+                superficie_juego.blit(sprite_enemigo, enemigo['rect'])
+            else:
+                pygame.draw.rect(superficie_juego, color_enemigo, enemigo['rect'])
 
         # --- DIBUJO DEL JUGADOR CON ANIMACIÓN ---
         if jugador_vivo:
@@ -505,12 +573,12 @@ while ejecutando:
 
                     frame_actual = lista_frames[indice_animacion % len(lista_frames)] if esta_caminando else lista_frames[0]
 
-                pantalla.blit(frame_actual, jugador_rect)
+                superficie_juego.blit(frame_actual, jugador_rect)
             else:
-                pygame.draw.rect(pantalla, color_jugador, jugador_rect)
+                pygame.draw.rect(superficie_juego, color_jugador, jugador_rect)
 
         txt_nivel = fuente_juego.render(f"Nivel {indice_nivel + 1}", True, (255, 255, 255))
-        pantalla.blit(txt_nivel, (15, 10))
+        superficie_juego.blit(txt_nivel, (15, 10))
 
         if nivel_completado:
             es_ultimo = (indice_nivel == len(DATOS_NIVELES) - 1)
@@ -524,9 +592,9 @@ while ejecutando:
             s.set_alpha(220)
             s.fill((0, 0, 0))
             
-            pantalla.blit(s, (configuracio.ANCHO // 2 - 240, configuracio.ALTO // 2 - 45))
-            pantalla.blit(txt_1, txt_1.get_rect(center=(configuracio.ANCHO // 2, configuracio.ALTO // 2 - 15)))
-            pantalla.blit(txt_2, txt_2.get_rect(center=(configuracio.ANCHO // 2, configuracio.ALTO // 2 + 20)))
+            superficie_juego.blit(s, (ANCHO_BASE // 2 - 240, ALTO_BASE // 2 - 45))
+            superficie_juego.blit(txt_1, txt_1.get_rect(center=(ANCHO_BASE // 2, ALTO_BASE // 2 - 15)))
+            superficie_juego.blit(txt_2, txt_2.get_rect(center=(ANCHO_BASE // 2, ALTO_BASE // 2 + 20)))
 
         elif not jugador_vivo:
             txt_game_over = fuente_subtitulo.render("¡HAS MUERTO! Presiona R", True, (231, 76, 60))
@@ -535,8 +603,16 @@ while ejecutando:
             s.set_alpha(200)
             s.fill((0, 0, 0))
             
-            pantalla.blit(s, (configuracio.ANCHO // 2 - 190, configuracio.ALTO // 2 - 30))
-            pantalla.blit(txt_game_over, txt_game_over.get_rect(center=(configuracio.ANCHO // 2, configuracio.ALTO // 2)))
+            superficie_juego.blit(s, (ANCHO_BASE // 2 - 190, ALTO_BASE // 2 - 30))
+            superficie_juego.blit(txt_game_over, txt_game_over.get_rect(center=(ANCHO_BASE // 2, ALTO_BASE // 2)))
+
+    # ==============================================================================
+    # ESCALADO Y BLIT EN PANTALLA PRINCIPAL
+    # ==============================================================================
+    superficie_escalada = pygame.transform.scale(superficie_juego, (nuevo_ancho, nuevo_alto))
+    
+    pantalla.fill((10, 10, 15))
+    pantalla.blit(superficie_escalada, (offset_x_win, offset_y_win))
 
     pygame.display.flip()
     reloj.tick(getattr(configuracio, "FPS", 60))

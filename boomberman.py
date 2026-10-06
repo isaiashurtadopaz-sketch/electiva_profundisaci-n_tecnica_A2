@@ -6,35 +6,96 @@ import configuracio
 import mapas
 
 # ==============================================================================
-# 1. INICIALIZACIÓN DE PYGAME
+# 1. INICIALIZACIÓN DE PYGAME Y VENTANA REDIMENSIONABLE
 # ==============================================================================
 pygame.init()
 pygame.font.init()
 
 pantalla_completa = False
-pantalla = pygame.display.set_mode((configuracio.ANCHO, configuracio.ALTO))
+
+# Habilitamos RESIZABLE para permitir maximizar y estirar la ventana con el botón
+pantalla = pygame.display.set_mode((configuracio.ANCHO, configuracio.ALTO), pygame.RESIZABLE)
 pygame.display.set_caption("Bomberman - NES Style")
 
 reloj = pygame.time.Clock()
 
-# Fuentes estables independientes del sistema
 fuente_titulo = pygame.font.SysFont("arial", 54, bold=True)
 fuente_subtitulo = pygame.font.SysFont("arial", 26, bold=True)
 fuente_juego = pygame.font.SysFont("arial", 20)
 
+# --- CARGA Y RECORTE DE HOJA DE SPRITES DEL JUGADOR ---
+tam_jugador = getattr(configuracio, "TAMANO_JUGADOR", 36)
+sprites_cargados = False
+
+try:
+    hoja_sprites = pygame.image.load("animaciones (1).png")
+    
+    if hoja_sprites.get_alpha() is not None:
+        hoja_sprites = hoja_sprites.convert_alpha()
+    else:
+        hoja_sprites = hoja_sprites.convert()
+        hoja_sprites.set_colorkey((255, 255, 255))
+    
+    COLUMNAS_HOJA, FILAS_HOJA = 7, 4
+    ancho_f = hoja_sprites.get_width() // COLUMNAS_HOJA
+    alto_f = hoja_sprites.get_height() // FILAS_HOJA
+    
+    MARGEN = 1 
+    
+    matriz_sprites = []
+    for f in range(FILAS_HOJA):
+        fila_s = []
+        for c in range(COLUMNAS_HOJA):
+            rect_corte = pygame.Rect(
+                c * ancho_f + MARGEN,
+                f * alto_f + MARGEN,
+                max(1, ancho_f - (MARGEN * 2)),
+                max(1, alto_f - (MARGEN * 2))
+            )
+            frame = hoja_sprites.subsurface(rect_corte)
+            frame_esc = pygame.transform.scale(frame, (tam_jugador, tam_jugador))
+            fila_s.append(frame_esc)
+        matriz_sprites.append(fila_s)
+        
+    ANIM_ABAJO = [matriz_sprites[0][0]]
+    ANIM_ARRIBA = [matriz_sprites[0][1], matriz_sprites[0][2]]
+    ANIM_DERECHA = [matriz_sprites[0][3], matriz_sprites[0][4], matriz_sprites[0][5], matriz_sprites[0][6]]
+    ANIM_IZQUIERDA = [pygame.transform.flip(f, True, False) for f in ANIM_DERECHA]
+    FRAME_BOMBA = matriz_sprites[3][0]
+    
+    sprites_cargados = True
+    print("¡Sprites recortados correctamente!")
+except Exception as e:
+    print(f"Nota: Usando cuadros de color para el personaje ({e})")
+
+# --- CARGA DE TEXTURAS DEL MAPA ---
+texturas_cargadas = False
+dict_texturas_escaladas = {}
+
+try:
+    tex_suelo_orig = pygame.image.load("suelo.png").convert()
+    tex_fijo_orig = pygame.image.load("fijo.png").convert()
+    tex_destruible_orig = pygame.image.load("destruible.png").convert()
+    texturas_cargadas = True
+    print("¡Texturas del mapa cargadas correctamente!")
+except Exception as e:
+    print(f"Nota: Se usarán colores planos hasta agregar suelo.png, fijo.png y destruible.png ({e})")
+
 # ==============================================================================
-# 2. VARIABLES DE ESTADO Y BOTÓN
+# 2. VARIABLES DE ESTADO Y DATOS DE NIVELES
 # ==============================================================================
 estado_juego = "MENU"
 ejecutando = True
 
+direccion_jugador = "ABAJO"
+esta_caminando = False
+indice_animacion = 0
+tiempo_ultima_anim = 0
+VELOCIDAD_ANIMACION = 120
+tiempo_anim_bomba = 0
+
 ANCHO_BOTON, ALTO_BOTON = 280, 60
-rect_boton_inicio = pygame.Rect(
-    (configuracio.ANCHO // 2) - (ANCHO_BOTON // 2),
-    (configuracio.ALTO // 2) - (ALTO_BOTON // 2),
-    ANCHO_BOTON,
-    ALTO_BOTON
-)
+rect_boton_inicio = pygame.Rect(0, 0, ANCHO_BOTON, ALTO_BOTON)
 
 DATOS_NIVELES = [
     {
@@ -98,7 +159,8 @@ def crear_enemigos(mapa, cantidad):
     posiciones = random.sample(casillas_libres, min(cantidad, len(casillas_libres)))
     direcciones_posibles = [(-1, 0), (1, 0), (0, -1), (0, 1)]
     
-    tam_enemigo = getattr(configuracio, "TAMANO_ENEMIGO", 24)
+    # Tamaño del enemigo (puedes cambiarlo desde configuracio.py o aquí)
+    tam_enemigo = getattr(configuracio, "TAMANO_ENEMIGO", 32)
     vel_enemigo = getattr(configuracio, "VELOCIDAD_ENEMIGO", 2)
 
     for f, c in posiciones:
@@ -118,6 +180,7 @@ def crear_enemigos(mapa, cantidad):
 def cargar_nivel(num_nivel):
     global mapa_actual, color_suelo_actual, color_fijo_actual, color_destruible_actual
     global jugador_rect, bombas, explosiones, enemigos, jugador_vivo, nivel_completado
+    global direccion_jugador, esta_caminando, indice_animacion
     
     datos = DATOS_NIVELES[num_nivel]
     mapa_actual = [list(map(int, fila)) for fila in datos["mapa"]]
@@ -129,8 +192,8 @@ def cargar_nivel(num_nivel):
     total_cols = len(mapa_actual[0]) if total_filas > 0 else configuracio.COLUMNAS
     rect_inicio = obtener_rect_casilla(1, 1, total_filas, total_cols)
     
-    tam_jugador = getattr(configuracio, "TAMANO_JUGADOR", 26)
-    jugador_rect = pygame.Rect(0, 0, tam_jugador, tam_jugador)
+    tam_j = getattr(configuracio, "TAMANO_JUGADOR", 36)
+    jugador_rect = pygame.Rect(0, 0, tam_j, tam_j)
     jugador_rect.center = rect_inicio.center
     
     bombas = []
@@ -138,6 +201,10 @@ def cargar_nivel(num_nivel):
     enemigos = crear_enemigos(mapa_actual, datos["enemigos"])
     jugador_vivo = True
     nivel_completado = False
+    
+    direccion_jugador = "ABAJO"
+    esta_caminando = False
+    indice_animacion = 0
 
 # ==============================================================================
 # 4. BUCLE PRINCIPAL
@@ -149,35 +216,42 @@ while ejecutando:
     for evento in pygame.event.get():
         if evento.type == pygame.QUIT:
             ejecutando = False
-            
-        # Pantalla completa con F11
-        if evento.type == pygame.KEYDOWN and evento.key == pygame.K_F11:
-            pantalla_completa = not pantalla_completa
-            if pantalla_completa:
-                pantalla = pygame.display.set_mode((configuracio.ANCHO, configuracio.ALTO), pygame.FULLSCREEN | pygame.SCALED)
-            else:
-                pantalla = pygame.display.set_mode((configuracio.ANCHO, configuracio.ALTO))
 
-        # Eventos en el Menú (Cualquier clic o tecla inicia la partida)
+        # --- EVENTO DE MAXIMIZAR Y REDIMENSIONAR VENTANA ---
+        if evento.type == pygame.VIDEORESIZE:
+            configuracio.ANCHO, configuracio.ALTO = evento.w, evento.h
+            pantalla = pygame.display.set_mode((evento.w, evento.h), pygame.RESIZABLE)
+
+        # --- TECLAS GLOBALES (MINIMIZAR Y PANTALLA COMPLETA) ---
+        if evento.type == pygame.KEYDOWN:
+            # Tecla ESC: Minimiza la ventana a la barra de tareas
+            if evento.key == pygame.K_ESCAPE:
+                pygame.display.iconify()
+
+            # Tecla F11: Alterna pantalla completa
+            if evento.key == pygame.K_F11:
+                pantalla_completa = not pantalla_completa
+                if pantalla_completa:
+                    pantalla = pygame.display.set_mode((configuracio.ANCHO, configuracio.ALTO), pygame.FULLSCREEN | pygame.SCALED)
+                else:
+                    pantalla = pygame.display.set_mode((configuracio.ANCHO, configuracio.ALTO), pygame.RESIZABLE)
+
+        # --- EVENTOS EN EL MENÚ ---
         if estado_juego == "MENU":
             if evento.type == pygame.MOUSEBUTTONDOWN:
-                indice_nivel = 0
-                cargar_nivel(indice_nivel)
-                estado_juego = "JUGANDO"
-
-            elif evento.type == pygame.KEYDOWN:
-                if evento.key == pygame.K_ESCAPE:
-                    ejecutando = False
-                else:
+                if rect_boton_inicio.collidepoint(pos_raton):
                     indice_nivel = 0
                     cargar_nivel(indice_nivel)
                     estado_juego = "JUGANDO"
 
-        # Eventos durante el Juego
-        elif estado_juego == "JUGANDO" and evento.type == pygame.KEYDOWN:
-            if evento.key == pygame.K_ESCAPE:
-                estado_juego = "MENU"
+            elif evento.type == pygame.KEYDOWN:
+                if evento.key in (pygame.K_RETURN, pygame.K_SPACE):
+                    indice_nivel = 0
+                    cargar_nivel(indice_nivel)
+                    estado_juego = "JUGANDO"
 
+        # --- EVENTOS EN EL JUEGO ---
+        elif estado_juego == "JUGANDO" and evento.type == pygame.KEYDOWN:
             if evento.key == pygame.K_r and not jugador_vivo:
                 cargar_nivel(indice_nivel)
                 
@@ -211,20 +285,22 @@ while ejecutando:
                         'col': col,
                         'fila': fila
                     })
+                    tiempo_anim_bomba = tiempo_actual + 300
 
     # ==============================================================================
-    # RENDERIZADO VISUAL
+    # LÓGICA Y DIBUJADO DE PANTALLA
     # ==============================================================================
     if estado_juego == "MENU":
-        # Fondo azul oscuro garantizado (evita pantalla en negro)
         pantalla.fill((25, 30, 50))
+        
+        # Centrado dinámico del botón según el tamaño de ventana
+        rect_boton_inicio.center = (configuracio.ANCHO // 2, configuracio.ALTO // 2)
         
         txt_sombra = fuente_titulo.render("BOMBERMAN", True, (0, 0, 0))
         txt_titulo = fuente_titulo.render("BOMBERMAN", True, (241, 196, 15))
         pantalla.blit(txt_sombra, txt_sombra.get_rect(center=(configuracio.ANCHO // 2 + 3, 113)))
         pantalla.blit(txt_titulo, txt_titulo.get_rect(center=(configuracio.ANCHO // 2, 110)))
         
-        # Botón
         hover = rect_boton_inicio.collidepoint(pos_raton)
         color_boton = (230, 126, 34) if hover else (211, 84, 0)
         color_borde = (255, 255, 255) if hover else (241, 196, 15)
@@ -235,14 +311,13 @@ while ejecutando:
         txt_boton = fuente_subtitulo.render("INICIAR JUEGO", True, (255, 255, 255))
         pantalla.blit(txt_boton, txt_boton.get_rect(center=rect_boton_inicio.center))
 
-        # Indicaciones de inicio
         txt_tecla = fuente_subtitulo.render("Presiona ENTER, ESPACIO o Clic para empezar", True, (46, 204, 113))
-        pantalla.blit(txt_tecla, txt_tecla.get_rect(center=(configuracio.ANCHO // 2, 370)))
+        pantalla.blit(txt_tecla, txt_tecla.get_rect(center=(configuracio.ANCHO // 2, configuracio.ALTO // 2 + 80)))
 
         ctrl_1 = fuente_juego.render("Controles: WASD = Moverse | ESPACIO = Bomba", True, (200, 210, 225))
-        ctrl_2 = fuente_juego.render("R = Reiniciar | ESC = Menú | F11 = Pantalla Completa", True, (200, 210, 225))
-        pantalla.blit(ctrl_1, ctrl_1.get_rect(center=(configuracio.ANCHO // 2, 450)))
-        pantalla.blit(ctrl_2, ctrl_2.get_rect(center=(configuracio.ANCHO // 2, 485)))
+        ctrl_2 = fuente_juego.render("ESC = Minimizar | F11 = Pantalla Completa | R = Reiniciar", True, (200, 210, 225))
+        pantalla.blit(ctrl_1, ctrl_1.get_rect(center=(configuracio.ANCHO // 2, configuracio.ALTO - 70)))
+        pantalla.blit(ctrl_2, ctrl_2.get_rect(center=(configuracio.ANCHO // 2, configuracio.ALTO - 35)))
 
     elif estado_juego == "JUGANDO":
         total_filas = len(mapa_actual)
@@ -258,10 +333,26 @@ while ejecutando:
             teclas = pygame.key.get_pressed()
             dx, dy = 0, 0
             vel_jugador = getattr(configuracio, "VELOCIDAD_JUGADOR", 3)
-            if teclas[pygame.K_a]: dx -= vel_jugador
-            if teclas[pygame.K_d]: dx += vel_jugador
-            if teclas[pygame.K_w]: dy -= vel_jugador
-            if teclas[pygame.K_s]: dy += vel_jugador
+
+            if teclas[pygame.K_a]:
+                dx -= vel_jugador
+                direccion_jugador = "IZQUIERDA"
+            elif teclas[pygame.K_d]:
+                dx += vel_jugador
+                direccion_jugador = "DERECHA"
+
+            if teclas[pygame.K_w]:
+                dy -= vel_jugador
+                direccion_jugador = "ARRIBA"
+            elif teclas[pygame.K_s]:
+                dy += vel_jugador
+                direccion_jugador = "ABAJO"
+
+            esta_caminando = (dx != 0 or dy != 0)
+
+            if esta_caminando and tiempo_actual - tiempo_ultima_anim > VELOCIDAD_ANIMACION:
+                indice_animacion += 1
+                tiempo_ultima_anim = tiempo_actual
 
             jugador_rect.x += dx
             for bloque in bloques_colision:
@@ -351,8 +442,18 @@ while ejecutando:
         offset_x = (configuracio.ANCHO - (total_cols * tamano_casilla)) // 2
         offset_y = (configuracio.ALTO - (total_filas * tamano_casilla)) // 2
         
-        rect_tablero = pygame.Rect(offset_x, offset_y, total_cols * tamano_casilla, total_filas * tamano_casilla)
-        pygame.draw.rect(pantalla, color_suelo_actual, rect_tablero)
+        # --- ESCALADO Y RENDERIZADO DE TEXTURAS / COLORES ---
+        if texturas_cargadas:
+            if dict_texturas_escaladas.get("tamano") != tamano_casilla:
+                dict_texturas_escaladas = {
+                    "tamano": tamano_casilla,
+                    "suelo": pygame.transform.scale(tex_suelo_orig, (tamano_casilla, tamano_casilla)),
+                    "fijo": pygame.transform.scale(tex_fijo_orig, (tamano_casilla, tamano_casilla)),
+                    "destruible": pygame.transform.scale(tex_destruible_orig, (tamano_casilla, tamano_casilla))
+                }
+        else:
+            rect_tablero = pygame.Rect(offset_x, offset_y, total_cols * tamano_casilla, total_filas * tamano_casilla)
+            pygame.draw.rect(pantalla, color_suelo_actual, rect_tablero)
 
         color_fuego = getattr(configuracio, "COLOR_FUEGO", (231, 76, 60))
         color_bomba = getattr(configuracio, "COLOR_BOMBA", (0, 0, 0))
@@ -363,12 +464,19 @@ while ejecutando:
             for col_idx, casilla in enumerate(fila):
                 rect = obtener_rect_casilla(fila_idx, col_idx, total_filas, total_cols)
                 
-                if casilla == 1:
-                    pygame.draw.rect(pantalla, color_fijo_actual, rect)
-                    pygame.draw.rect(pantalla, (0, 0, 0), rect, 2)
-                elif casilla == 2:
-                    pygame.draw.rect(pantalla, color_destruible_actual, rect)
-                    pygame.draw.rect(pantalla, (100, 50, 20), rect, 2)
+                if texturas_cargadas:
+                    pantalla.blit(dict_texturas_escaladas["suelo"], rect)
+                    if casilla == 1:
+                        pantalla.blit(dict_texturas_escaladas["fijo"], rect)
+                    elif casilla == 2:
+                        pantalla.blit(dict_texturas_escaladas["destruible"], rect)
+                else:
+                    if casilla == 1:
+                        pygame.draw.rect(pantalla, color_fijo_actual, rect)
+                        pygame.draw.rect(pantalla, (0, 0, 0), rect, 2)
+                    elif casilla == 2:
+                        pygame.draw.rect(pantalla, color_destruible_actual, rect)
+                        pygame.draw.rect(pantalla, (100, 50, 20), rect, 2)
 
         for exp in explosiones:
             for llama in exp['llamas']:
@@ -380,8 +488,26 @@ while ejecutando:
         for enemigo in enemigos:
             pygame.draw.rect(pantalla, color_enemigo, enemigo['rect'])
 
+        # --- DIBUJO DEL JUGADOR CON ANIMACIÓN ---
         if jugador_vivo:
-            pygame.draw.rect(pantalla, color_jugador, jugador_rect)
+            if sprites_cargados:
+                if tiempo_actual < tiempo_anim_bomba:
+                    frame_actual = FRAME_BOMBA
+                else:
+                    if direccion_jugador == "ARRIBA":
+                        lista_frames = ANIM_ARRIBA
+                    elif direccion_jugador == "DERECHA":
+                        lista_frames = ANIM_DERECHA
+                    elif direccion_jugador == "IZQUIERDA":
+                        lista_frames = ANIM_IZQUIERDA
+                    else:
+                        lista_frames = ANIM_ABAJO
+
+                    frame_actual = lista_frames[indice_animacion % len(lista_frames)] if esta_caminando else lista_frames[0]
+
+                pantalla.blit(frame_actual, jugador_rect)
+            else:
+                pygame.draw.rect(pantalla, color_jugador, jugador_rect)
 
         txt_nivel = fuente_juego.render(f"Nivel {indice_nivel + 1}", True, (255, 255, 255))
         pantalla.blit(txt_nivel, (15, 10))

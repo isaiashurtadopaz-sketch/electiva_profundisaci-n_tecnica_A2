@@ -34,7 +34,8 @@ COLOR_BORDE_NEGRO = (0, 0, 0)
 
 # Propiedades del Personaje
 COLOR_JUGADOR = (240, 240, 240)      
-COLOR_BOMBA = (20, 20, 20)           
+COLOR_BOMBA = (20, 20, 20)
+TAMANO_JUGADOR = 35  # Prueba con 36 o 40 según qué tan grande lo quieras           
 VELOCIDAD_JUGADOR = 3               
 
 # Propiedades de la Explosión
@@ -46,3 +47,4 @@ ALCANCE_BOMBA = 1
 # Propiedades de los Enemigos
 COLOR_ENEMIGO = (155, 89, 182)      
 VELOCIDAD_ENEMIGO = 2
+TAMAÑO_ENEMIGO = 32

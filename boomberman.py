@@ -1,37 +1,71 @@
- # boomberman_2.py
+# boomberman_4.py
 import sys
+import os
 import random
 import pygame
 import configuracio
 import mapas
 
 # ==============================================================================
-# 1. INICIALIZACIÓN DE PYGAME Y VENTANA REDIMENSIONABLE
+# 1. INICIALIZACIÓN DE PYGAME, AUDIO Y VENTANA
 # ==============================================================================
 pygame.init()
+pygame.mixer.init()
 pygame.font.init()
 
 pantalla_completa = False
 
-# Dimensiones base del juego (Espacio de coordenadas interno fijo)
+# Dimensiones base del juego
 ANCHO_BASE = getattr(configuracio, "ANCHO", 800)
 ALTO_BASE = getattr(configuracio, "ALTO", 600)
 
-# Dimensiones iniciales de la ventana física
 ancho_ventana, alto_ventana = ANCHO_BASE, ALTO_BASE
 
-# Habilitamos RESIZABLE para permitir maximizar y estirar la ventana
 pantalla = pygame.display.set_mode((ancho_ventana, alto_ventana), pygame.RESIZABLE)
 pygame.display.set_caption("Bomberman - NES Style")
 
-# Superficie interna donde dibujamos todo a resolución fija antes de escalar
 superficie_juego = pygame.Surface((ANCHO_BASE, ALTO_BASE))
-
 reloj = pygame.time.Clock()
 
 fuente_titulo = pygame.font.SysFont("arial", 54, bold=True)
 fuente_subtitulo = pygame.font.SysFont("arial", 26, bold=True)
 fuente_juego = pygame.font.SysFont("arial", 20)
+
+# --- CARGA Y CONFIGURACIÓN DEL SISTEMA DE AUDIO ---
+sfx_bomba = None
+sfx_game_over = None
+
+try:
+    if os.path.exists("sonidodebomba.mp3"):
+        sfx_bomba = pygame.mixer.Sound("sonidodebomba.mp3")
+    if os.path.exists("gamerover.mp3"):
+        sfx_game_over = pygame.mixer.Sound("gamerover.mp3")
+    print("¡Efectos de sonido cargados correctamente!")
+except Exception as e:
+    print(f"Nota: No se pudieron cargar los efectos de sonido ({e})")
+
+RUTAS_MUSICA = {
+    "MENU": "musicadeintro.mp3",
+    0: "nusicanivel1.mp3",
+    1: "musicanivel2.mp3",
+    2: "musicanivel3.mp3"
+}
+
+musica_actual_pista = None
+
+def cambiar_musica(ruta_archivo, forzar=False):
+    global musica_actual_pista
+    if musica_actual_pista != ruta_archivo or forzar:
+        musica_actual_pista = ruta_archivo
+        if ruta_archivo and os.path.exists(ruta_archivo):
+            try:
+                pygame.mixer.music.load(ruta_archivo)
+                pygame.mixer.music.set_volume(0.5)
+                pygame.mixer.music.play(-1)
+            except Exception as e:
+                print(f"Error al reproducir {ruta_archivo}: {e}")
+        else:
+            pygame.mixer.music.stop()
 
 # --- CARGA Y RECORTE DE HOJA DE SPRITES DEL JUGADOR ---
 tam_jugador = getattr(configuracio, "TAMANO_JUGADOR", 36)
@@ -62,8 +96,9 @@ try:
                 max(1, ancho_f - (MARGEN * 2)),
                 max(1, alto_f - (MARGEN * 2))
             )
-            frame = hoja_sprites.subsurface(rect_corte)
-            frame_esc = pygame.transform.scale(frame, (tam_jugador, tam_jugador))
+            frame_limpio = pygame.Surface(rect_corte.size, pygame.SRCALPHA)
+            frame_limpio.blit(hoja_sprites, (0, 0), rect_corte)
+            frame_esc = pygame.transform.scale(frame_limpio, (tam_jugador, tam_jugador))
             fila_s.append(frame_esc)
         matriz_sprites.append(fila_s)
         
@@ -71,6 +106,7 @@ try:
     ANIM_ARRIBA = [matriz_sprites[0][1], matriz_sprites[0][2]]
     ANIM_DERECHA = [matriz_sprites[0][3], matriz_sprites[0][4], matriz_sprites[0][5], matriz_sprites[0][6]]
     ANIM_IZQUIERDA = [pygame.transform.flip(f, True, False) for f in ANIM_DERECHA]
+    ANIM_VICTORIA = [matriz_sprites[1][0], matriz_sprites[1][1], matriz_sprites[1][2]]
     FRAME_BOMBA = matriz_sprites[3][0]
     
     sprites_cargados = True
@@ -78,60 +114,150 @@ try:
 except Exception as e:
     print(f"Nota: Usando cuadros de color para el personaje ({e})")
 
-# --- CARGA DEL SPRITE ÚNICO DEL ENEMIGO NIVEL 1 ---
-sprites_enemigo_n1_cargados = False
-dict_sprites_enemigo_n1 = {}
+# --- CARGA Y ESCALADO DEL SPRITE DE LA BOMBA ---
+sprite_bomba = None
+tam_bomba = int(tam_jugador * 0.8)
 
 try:
-    img_enemigo_raw = pygame.image.load("enemigo1 (1).png")
-    if img_enemigo_raw.get_alpha() is not None:
-        img_enemigo_raw = img_enemigo_raw.convert_alpha()
+    img_bomba_raw = pygame.image.load("bomba.png")
+    if img_bomba_raw.get_alpha() is not None:
+        img_bomba_raw = img_bomba_raw.convert_alpha()
     else:
-        img_enemigo_raw = img_enemigo_raw.convert()
-        img_enemigo_raw.set_colorkey((255, 255, 255))
+        img_bomba_raw = img_bomba_raw.convert()
+        img_bomba_raw.set_colorkey((255, 255, 255))
         
-    tam_e = getattr(configuracio, "TAMANO_ENEMIGO", 35)
-
-    # Eliminar bordes transparentes/blancos vacíos alrededor del dibujo
-    rect_limpio = img_enemigo_raw.get_bounding_rect()
+    rect_limpio = img_bomba_raw.get_bounding_rect()
     if rect_limpio.width > 0 and rect_limpio.height > 0:
-        img_enemigo_raw = img_enemigo_raw.subsurface(rect_limpio)
+        surf_bomba = pygame.Surface(rect_limpio.size, pygame.SRCALPHA)
+        surf_bomba.blit(img_bomba_raw, (0, 0), rect_limpio)
+        img_bomba_raw = surf_bomba
         
-    # Escalado manteniendo el aspecto proporcional original
-    w_orig, h_orig = img_enemigo_raw.get_width(), img_enemigo_raw.get_height()
-    ratio = min(tam_e / w_orig, tam_e / h_orig)
+    w_orig, h_orig = img_bomba_raw.get_width(), img_bomba_raw.get_height()
+    ratio = min(tam_bomba / w_orig, tam_bomba / h_orig)
     nw, nh = max(1, int(w_orig * ratio)), max(1, int(h_orig * ratio))
     
-    img_esc = pygame.transform.scale(img_enemigo_raw, (nw, nh))
-    
-    # Crear un lienzo de (tam_e, tam_e) con fondo transparente y centrar la imagen
-    surf_canvas = pygame.Surface((tam_e, tam_e), pygame.SRCALPHA)
-    offset_x = (tam_e - nw) // 2
-    offset_y = (tam_e - nh) // 2
-    surf_canvas.blit(img_esc, (offset_x, offset_y))
-
-    # Asignar la imagen a todas las direcciones posibles
-    for dir_key in ["IZQUIERDA", "DERECHA", "ABAJO", "ARRIBA"]:
-        dict_sprites_enemigo_n1[dir_key] = surf_canvas
-
-    sprites_enemigo_n1_cargados = True
-    print("¡Sprite individual del enemigo cargado y ajustado con éxito!")
-
+    sprite_bomba = pygame.transform.scale(img_bomba_raw, (nw, nh))
+    print("¡Sprite de bomba.png cargado correctamente!")
 except Exception as e:
-    print(f"Error cargando enemigo1 (1).png: {e}")
+    print(f"Nota: No se pudo cargar 'bomba.png' ({e})")
 
-# --- CARGA DE TEXTURAS DEL MAPA ---
-texturas_cargadas = False
-dict_texturas_escaladas = {}
+# --- CARGA DE LA HOJA DE EXPLOSIÓN ---
+frames_explosion = []
 
 try:
-    tex_suelo_orig = pygame.image.load("suelo.png").convert()
-    tex_fijo_orig = pygame.image.load("fijo.png").convert()
-    tex_destruible_orig = pygame.image.load("destruible.png").convert()
-    texturas_cargadas = True
-    print("¡Texturas del mapa cargadas correctamente!")
+    nombre_archivo_exp = "exploción.png" if os.path.exists("exploción.png") else "explosion.png"
+    hoja_exp = pygame.image.load(nombre_archivo_exp)
+    
+    if hoja_exp.get_alpha() is not None:
+        hoja_exp = hoja_exp.convert_alpha()
+    else:
+        hoja_exp = hoja_exp.convert()
+        hoja_exp.set_colorkey((255, 255, 255))
+
+    COLS_EXP, FILAS_EXP = 4, 4
+    ancho_exp_f = hoja_exp.get_width() // COLS_EXP
+    alto_exp_f = hoja_exp.get_height() // FILAS_EXP
+
+    for f in range(FILAS_EXP):
+        for c in range(COLS_EXP):
+            rect_corte = pygame.Rect(c * ancho_exp_f, f * alto_exp_f, ancho_exp_f, alto_exp_f)
+            frame_limpio = pygame.Surface(rect_corte.size, pygame.SRCALPHA)
+            frame_limpio.blit(hoja_exp, (0, 0), rect_corte)
+            frames_explosion.append(frame_limpio)
+
+    print(f"¡Animación de explosión ({len(frames_explosion)} cuadros) cargada con éxito!")
 except Exception as e:
-    print(f"Nota: Se usarán colores planos hasta agregar suelo.png, fijo.png y destruible.png ({e})")
+    print(f"Nota: No se pudo cargar la hoja de explosión ({e})")
+
+# --- CARGA DE SPRITES DE ENEMIGOS POR NIVEL ---
+def cargar_sprite_enemigo_individual(ruta_archivo, tam_e):
+    try:
+        img_raw = pygame.image.load(ruta_archivo)
+        if img_raw.get_alpha() is not None:
+            img_raw = img_raw.convert_alpha()
+        else:
+            img_raw = img_raw.convert()
+            img_raw.set_colorkey((255, 255, 255))
+            
+        rect_limpio = img_raw.get_bounding_rect()
+        if rect_limpio.width > 0 and rect_limpio.height > 0:
+            surf_e = pygame.Surface(rect_limpio.size, pygame.SRCALPHA)
+            surf_e.blit(img_raw, (0, 0), rect_limpio)
+            img_raw = surf_e
+            
+        w_orig, h_orig = img_raw.get_width(), img_raw.get_height()
+        ratio = min(tam_e / w_orig, tam_e / h_orig)
+        nw, nh = max(1, int(w_orig * ratio)), max(1, int(h_orig * ratio))
+        
+        img_esc = pygame.transform.scale(img_raw, (nw, nh))
+        
+        surf_canvas = pygame.Surface((tam_e, tam_e), pygame.SRCALPHA)
+        offset_x = (tam_e - nw) // 2
+        offset_y = (tam_e - nh) // 2
+        surf_canvas.blit(img_esc, (offset_x, offset_y))
+
+        dict_dir = {}
+        for dir_key in ["IZQUIERDA", "DERECHA", "ABAJO", "ARRIBA"]:
+            dict_dir[dir_key] = surf_canvas
+
+        print(f"¡Sprite cargado correctamente desde '{ruta_archivo}'!")
+        return dict_dir
+    except Exception as e:
+        print(f"Nota: No se pudo cargar '{ruta_archivo}': {e}")
+        return None
+
+tam_e = getattr(configuracio, "TAMANO_ENEMIGO", 35)
+
+sprites_enemigos = {
+    0: cargar_sprite_enemigo_individual("enemigo1 (1).png", tam_e),
+    1: cargar_sprite_enemigo_individual("enemigo(2).png", tam_e),
+    2: cargar_sprite_enemigo_individual("enemigo(3).png", tam_e)
+}
+
+# --- CARGA Y RECORTADO AUTOMÁTICO DE TEXTURAS DEL MAPA ---
+def cargar_y_limpiar_textura(ruta):
+    if os.path.exists(ruta):
+        try:
+            img = pygame.image.load(ruta)
+            
+            # Detectar y eliminar fondos blancos o transparencias sobrantes
+            if img.get_alpha() is None:
+                img = img.convert()
+                if img.get_at((0, 0))[:3] == (255, 255, 255):
+                    img.set_colorkey((255, 255, 255))
+            else:
+                img = img.convert_alpha()
+
+            rect_limpio = img.get_bounding_rect()
+            if rect_limpio.width > 0 and rect_limpio.height > 0:
+                surf_limpia = pygame.Surface(rect_limpio.size, pygame.SRCALPHA)
+                surf_limpia.blit(img, (0, 0), rect_limpio)
+                return surf_limpia
+            return img
+        except Exception as e:
+            print(f"Error al cargar la textura '{ruta}': {e}")
+    return None
+
+# Mapeo de texturas específicas para cada nivel (0: Nivel 1, 1: Nivel 2, 2: Nivel 3)
+texturas_por_nivel = {
+    0: {
+        "suelo": cargar_y_limpiar_textura("suelo.png"),
+        "fijo": cargar_y_limpiar_textura("bloque_solido.png") or cargar_y_limpiar_textura("fijo.png"),
+        "destruible": cargar_y_limpiar_textura("romplibe.png") or cargar_y_limpiar_textura("destruible.png")
+    },
+    1: {
+        "suelo": cargar_y_limpiar_textura("suelo.png"),
+        "fijo": cargar_y_limpiar_textura("bloquesolido2.png"),
+        "destruible": cargar_y_limpiar_textura("rompible2.png")
+    },
+    2: {
+        "suelo": cargar_y_limpiar_textura("suelo.png"),
+        "fijo": cargar_y_limpiar_textura("solido3.png") or cargar_y_limpiar_textura("bloquesolido3.png"),
+        "destruible": cargar_y_limpiar_textura("rompible3.png")
+    }
+}
+
+dict_texturas_escaladas = {}
 
 # ==============================================================================
 # 2. VARIABLES DE ESTADO Y DATOS DE NIVELES
@@ -257,6 +383,21 @@ def cargar_nivel(num_nivel):
     esta_caminando = False
     indice_animacion = 0
 
+    cambiar_musica(RUTAS_MUSICA.get(num_nivel), forzar=True)
+
+
+def matar_jugador():
+    global jugador_vivo, musica_actual_pista
+    if jugador_vivo:
+        jugador_vivo = False
+        pygame.mixer.music.stop()
+        musica_actual_pista = None
+        if sfx_game_over:
+            sfx_game_over.play()
+
+# Iniciar música del menú
+cambiar_musica(RUTAS_MUSICA["MENU"])
+
 # ==============================================================================
 # 4. BUCLE PRINCIPAL
 # ==============================================================================
@@ -264,7 +405,6 @@ while ejecutando:
     tiempo_actual = pygame.time.get_ticks()
     pos_raton_real = pygame.mouse.get_pos()
 
-    # --- CÁLCULO DE ESCALA Y MARGENES PARA MANTENER PROPORCIONES ---
     escala_x = ancho_ventana / ANCHO_BASE
     escala_y = alto_ventana / ALTO_BASE
     escala = min(escala_x, escala_y) if min(escala_x, escala_y) > 0 else 1.0
@@ -318,10 +458,11 @@ while ejecutando:
             if evento.key == pygame.K_RETURN and nivel_completado:
                 if indice_nivel < len(DATOS_NIVELES) - 1:
                     indice_nivel += 1
+                    cargar_nivel(indice_nivel)
                 else:
                     indice_nivel = 0
                     estado_juego = "MENU"
-                cargar_nivel(indice_nivel)
+                    cambiar_musica(RUTAS_MUSICA["MENU"], forzar=True)
             
             if evento.key == pygame.K_SPACE and jugador_vivo and not nivel_completado:
                 total_filas = len(mapa_actual)
@@ -442,7 +583,7 @@ while ejecutando:
                     enemigo['dx'], enemigo['dy'] = random.choice(dirs)
 
                 if jugador_rect.colliderect(enemigo['rect']):
-                    jugador_vivo = False
+                    matar_jugador()
 
         tiempo_bomba = getattr(configuracio, "TIEMPO_BOMBA", 3000)
         alcance_bomba = getattr(configuracio, "ALCANCE_BOMBA", 2)
@@ -473,6 +614,8 @@ while ejecutando:
                                 llamas.append(rect_llama)
 
                 explosiones.append({'llamas': llamas, 'tiempo': tiempo_actual})
+                if sfx_bomba:
+                    sfx_bomba.play()
 
         for bomba in bombas_a_eliminar:
             bombas.remove(bomba)
@@ -483,7 +626,7 @@ while ejecutando:
         for exp in explosiones:
             for llama in exp['llamas']:
                 if jugador_vivo and jugador_rect.colliderect(llama):
-                    jugador_vivo = False
+                    matar_jugador()
                 
                 for enemigo in enemigos:
                     if enemigo['rect'].colliderect(llama) and enemigo not in enemigos_a_eliminar:
@@ -501,65 +644,94 @@ while ejecutando:
         offset_x = (ANCHO_BASE - (total_cols * tamano_casilla)) // 2
         offset_y = (ALTO_BASE - (total_filas * tamano_casilla)) // 2
         
-        if texturas_cargadas:
-            if dict_texturas_escaladas.get("tamano") != tamano_casilla:
-                dict_texturas_escaladas = {
-                    "tamano": tamano_casilla,
-                    "suelo": pygame.transform.scale(tex_suelo_orig, (tamano_casilla, tamano_casilla)),
-                    "fijo": pygame.transform.scale(tex_fijo_orig, (tamano_casilla, tamano_casilla)),
-                    "destruible": pygame.transform.scale(tex_destruible_orig, (tamano_casilla, tamano_casilla))
-                }
-        else:
-            rect_tablero = pygame.Rect(offset_x, offset_y, total_cols * tamano_casilla, total_filas * tamano_casilla)
-            pygame.draw.rect(superficie_juego, color_suelo_actual, rect_tablero)
+        # Selección de texturas según el nivel actual
+        dict_tex_nivel = texturas_por_nivel.get(indice_nivel, texturas_por_nivel[0])
+
+        if dict_texturas_escaladas.get("tamano") != tamano_casilla or dict_texturas_escaladas.get("nivel") != indice_nivel:
+            dict_texturas_escaladas = {
+                "tamano": tamano_casilla,
+                "nivel": indice_nivel,
+                "suelo": pygame.transform.scale(dict_tex_nivel["suelo"], (tamano_casilla, tamano_casilla)) if dict_tex_nivel.get("suelo") else None,
+                "fijo": pygame.transform.scale(dict_tex_nivel["fijo"], (tamano_casilla, tamano_casilla)) if dict_tex_nivel.get("fijo") else None,
+                "destruible": pygame.transform.scale(dict_tex_nivel["destruible"], (tamano_casilla, tamano_casilla)) if dict_tex_nivel.get("destruible") else None
+            }
 
         color_fuego = getattr(configuracio, "COLOR_FUEGO", (231, 76, 60))
         color_bomba = getattr(configuracio, "COLOR_BOMBA", (0, 0, 0))
         color_enemigo = getattr(configuracio, "COLOR_ENEMIGO", (155, 89, 182))
         color_jugador = getattr(configuracio, "COLOR_JUGADOR", (241, 196, 15))
 
+        # --- DIBUJO DE CASILLAS Y TEXTURAS DEL MAPA ---
         for fila_idx, fila in enumerate(mapa_actual):
             for col_idx, casilla in enumerate(fila):
                 rect = obtener_rect_casilla(fila_idx, col_idx, total_filas, total_cols)
                 
-                if texturas_cargadas:
+                # Suelo base debajo de cada celda
+                if dict_texturas_escaladas.get("suelo"):
                     superficie_juego.blit(dict_texturas_escaladas["suelo"], rect)
-                    if casilla == 1:
-                        superficie_juego.blit(dict_texturas_escaladas["fijo"], rect)
-                    elif casilla == 2:
-                        superficie_juego.blit(dict_texturas_escaladas["destruible"], rect)
                 else:
-                    if casilla == 1:
+                    pygame.draw.rect(superficie_juego, color_suelo_actual, rect)
+
+                # Bloque Sólido (1)
+                if casilla == 1:
+                    if dict_texturas_escaladas.get("fijo"):
+                        superficie_juego.blit(dict_texturas_escaladas["fijo"], rect)
+                    else:
                         pygame.draw.rect(superficie_juego, color_fijo_actual, rect)
                         pygame.draw.rect(superficie_juego, (0, 0, 0), rect, 2)
-                    elif casilla == 2:
+
+                # Bloque Rompible (2)
+                elif casilla == 2:
+                    if dict_texturas_escaladas.get("destruible"):
+                        superficie_juego.blit(dict_texturas_escaladas["destruible"], rect)
+                    else:
                         pygame.draw.rect(superficie_juego, color_destruible_actual, rect)
                         pygame.draw.rect(superficie_juego, (100, 50, 20), rect, 2)
 
+        # --- DIBUJO DE EXPLOSIONES ---
         for exp in explosiones:
-            for llama in exp['llamas']:
-                pygame.draw.rect(superficie_juego, color_fuego, llama)
+            tiempo_transcurrido = tiempo_actual - exp['tiempo']
+            if frames_explosion:
+                progreso = min(1.0, max(0.0, tiempo_transcurrido / duracion_explosion))
+                idx_frame = int(progreso * (len(frames_explosion) - 1))
+                frame_actual_exp = frames_explosion[idx_frame]
 
+                for llama in exp['llamas']:
+                    img_exp_esc = pygame.transform.scale(frame_actual_exp, (llama.width, llama.height))
+                    superficie_juego.blit(img_exp_esc, llama)
+            else:
+                for llama in exp['llamas']:
+                    pygame.draw.rect(superficie_juego, color_fuego, llama)
+
+        # --- DIBUJO DE BOMBA ---
         for bomba in bombas:
-            pygame.draw.circle(superficie_juego, color_bomba, bomba['rect'].center, min(bomba['rect'].width, bomba['rect'].height) // 3)
+            if sprite_bomba:
+                rect_b_img = sprite_bomba.get_rect(center=bomba['rect'].center)
+                superficie_juego.blit(sprite_bomba, rect_b_img)
+            else:
+                pygame.draw.circle(superficie_juego, color_bomba, bomba['rect'].center, min(bomba['rect'].width, bomba['rect'].height) // 3)
 
         # --- DIBUJO DE ENEMIGOS ---
+        dict_enemigo_actual = sprites_enemigos.get(indice_nivel)
         for enemigo in enemigos:
             if abs(enemigo['dx']) >= abs(enemigo['dy']):
                 dir_e = "DERECHA" if enemigo['dx'] > 0 else "IZQUIERDA"
             else:
                 dir_e = "ABAJO" if enemigo['dy'] > 0 else "ARRIBA"
 
-            if sprites_enemigo_n1_cargados and indice_nivel == 0:
-                sprite_enemigo = dict_sprites_enemigo_n1.get(dir_e, dict_sprites_enemigo_n1.get("ABAJO"))
+            if dict_enemigo_actual is not None:
+                sprite_enemigo = dict_enemigo_actual.get(dir_e, dict_enemigo_actual.get("ABAJO"))
                 superficie_juego.blit(sprite_enemigo, enemigo['rect'])
             else:
                 pygame.draw.rect(superficie_juego, color_enemigo, enemigo['rect'])
 
-        # --- DIBUJO DEL JUGADOR CON ANIMACIÓN ---
+        # --- DIBUJO DEL JUGADOR ---
         if jugador_vivo:
             if sprites_cargados:
-                if tiempo_actual < tiempo_anim_bomba:
+                if nivel_completado:
+                    idx_vic = (tiempo_actual // 150) % len(ANIM_VICTORIA)
+                    frame_actual = ANIM_VICTORIA[idx_vic]
+                elif tiempo_actual < tiempo_anim_bomba:
                     frame_actual = FRAME_BOMBA
                 else:
                     if direccion_jugador == "ARRIBA":

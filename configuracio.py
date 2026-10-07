@@ -1,4 +1,4 @@
- # configuracio.py
+# configuracio.py
 
 # Dimensiones de la ventana y rendimiento
 ANCHO = 800
@@ -47,3 +47,8 @@ ALCANCE_BOMBA = 1
 # Propiedades de los Enemigos
 COLOR_ENEMIGO = (155, 89, 182)     
 VELOCIDAD_ENEMIGO = 2
+
+# Propiedades de la Moneda / Power-Up
+COLOR_MONEDA = (241, 196, 15)       # Amarillo dorado
+COLOR_MONEDA_BORDE = (211, 84, 0)   # Naranja/Marrón para sombra
+PROBABILIDAD_MONEDA = 0.35     

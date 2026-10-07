@@ -1,4 +1,4 @@
-# boomberman_4.py
+# boomberman
 import sys
 import os
 import random
@@ -10,6 +10,7 @@ import mapas
 # 1. INICIALIZACIÓN DE PYGAME, AUDIO Y VENTANA
 # ==============================================================================
 pygame.init()
+
 pygame.mixer.init()
 pygame.font.init()
 
@@ -220,7 +221,6 @@ def cargar_y_limpiar_textura(ruta):
         try:
             img = pygame.image.load(ruta)
             
-            # Detectar y eliminar fondos blancos o transparencias sobrantes
             if img.get_alpha() is None:
                 img = img.convert()
                 if img.get_at((0, 0))[:3] == (255, 255, 255):
@@ -238,7 +238,6 @@ def cargar_y_limpiar_textura(ruta):
             print(f"Error al cargar la textura '{ruta}': {e}")
     return None
 
-# Mapeo de texturas específicas para cada nivel (0: Nivel 1, 1: Nivel 2, 2: Nivel 3)
 texturas_por_nivel = {
     0: {
         "suelo": cargar_y_limpiar_textura("suelo.png"),
@@ -271,6 +270,9 @@ indice_animacion = 0
 tiempo_ultima_anim = 0
 VELOCIDAD_ANIMACION = 120
 tiempo_anim_bomba = 0
+
+alcance_bomba_jugador = getattr(configuracio, "ALCANCE_BOMBA", 1)
+monedas = []
 
 ANCHO_BOTON, ALTO_BOTON = 280, 60
 rect_boton_inicio = pygame.Rect(0, 0, ANCHO_BOTON, ALTO_BOTON)
@@ -354,10 +356,15 @@ def crear_enemigos(mapa, cantidad):
     return enemigos
 
 
-def cargar_nivel(num_nivel):
+def cargar_nivel(num_nivel, reiniciar_powerups=True):
     global mapa_actual, color_suelo_actual, color_fijo_actual, color_destruible_actual
     global jugador_rect, bombas, explosiones, enemigos, jugador_vivo, nivel_completado
-    global direccion_jugador, esta_caminando, indice_animacion
+    global direccion_jugador, esta_caminando, indice_animacion, alcance_bomba_jugador, monedas
+    
+    if reiniciar_powerups:
+        alcance_bomba_jugador = getattr(configuracio, "ALCANCE_BOMBA", 1)
+
+    monedas = []
     
     datos = DATOS_NIVELES[num_nivel]
     mapa_actual = [list(map(int, fila)) for fila in datos["mapa"]]
@@ -442,23 +449,23 @@ while ejecutando:
             if evento.type == pygame.MOUSEBUTTONDOWN:
                 if rect_boton_inicio.collidepoint(pos_raton):
                     indice_nivel = 0
-                    cargar_nivel(indice_nivel)
+                    cargar_nivel(indice_nivel, reiniciar_powerups=True)
                     estado_juego = "JUGANDO"
 
             elif evento.type == pygame.KEYDOWN:
                 if evento.key in (pygame.K_RETURN, pygame.K_SPACE):
                     indice_nivel = 0
-                    cargar_nivel(indice_nivel)
+                    cargar_nivel(indice_nivel, reiniciar_powerups=True)
                     estado_juego = "JUGANDO"
 
         elif estado_juego == "JUGANDO" and evento.type == pygame.KEYDOWN:
             if evento.key == pygame.K_r and not jugador_vivo:
-                cargar_nivel(indice_nivel)
+                cargar_nivel(indice_nivel, reiniciar_powerups=True)
                 
             if evento.key == pygame.K_RETURN and nivel_completado:
                 if indice_nivel < len(DATOS_NIVELES) - 1:
                     indice_nivel += 1
-                    cargar_nivel(indice_nivel)
+                    cargar_nivel(indice_nivel, reiniciar_powerups=True) # Reinicia alcance al pasar de nivel
                 else:
                     indice_nivel = 0
                     estado_juego = "MENU"
@@ -566,6 +573,15 @@ while ejecutando:
                     if dy > 0: jugador_rect.bottom = bloque.top
                     if dy < 0: jugador_rect.top = bloque.bottom
 
+            # --- RECOLECCIÓN DE MONEDAS POR EL JUGADOR ---
+            monedas_recogidas = []
+            for moneda in monedas:
+                if jugador_rect.colliderect(moneda['rect']):
+                    alcance_bomba_jugador += 1
+                    monedas_recogidas.append(moneda)
+            for m in monedas_recogidas:
+                monedas.remove(m)
+
             for enemigo in enemigos:
                 enemigo['rect'].x += enemigo['dx']
                 if any(enemigo['rect'].colliderect(b) for b in bloques_colision):
@@ -586,8 +602,8 @@ while ejecutando:
                     matar_jugador()
 
         tiempo_bomba = getattr(configuracio, "TIEMPO_BOMBA", 3000)
-        alcance_bomba = getattr(configuracio, "ALCANCE_BOMBA", 2)
         duracion_explosion = getattr(configuracio, "DURACION_EXPLOSION", 500)
+        prob_moneda = getattr(configuracio, "PROBABILIDAD_MONEDA", 0.70)
 
         bombas_a_eliminar = []
         for bomba in bombas:
@@ -598,7 +614,7 @@ while ejecutando:
                 
                 direcciones = [(-1, 0), (1, 0), (0, -1), (0, 1)]
                 for df, dc in direcciones:
-                    for i in range(1, alcance_bomba + 1):
+                    for i in range(1, alcance_bomba_jugador + 1):
                         f, c = fila_b + (df * i), col_b + (dc * i)
                         if 0 <= f < total_filas and 0 <= c < total_cols:
                             casilla = mapa_actual[f][c]
@@ -609,6 +625,14 @@ while ejecutando:
                             elif casilla == 2:
                                 mapa_actual[f][c] = 0
                                 llamas.append(rect_llama)
+                                
+                                # Probabilidad de spawnear una moneda al romper el bloque
+                                if random.random() < prob_moneda:
+                                    monedas.append({
+                                        'rect': rect_llama.copy(), 
+                                        'col': c, 
+                                        'fila': f
+                                    })
                                 break
                             else:
                                 llamas.append(rect_llama)
@@ -627,7 +651,7 @@ while ejecutando:
             for llama in exp['llamas']:
                 if jugador_vivo and jugador_rect.colliderect(llama):
                     matar_jugador()
-                
+
                 for enemigo in enemigos:
                     if enemigo['rect'].colliderect(llama) and enemigo not in enemigos_a_eliminar:
                         enemigos_a_eliminar.append(enemigo)
@@ -644,7 +668,6 @@ while ejecutando:
         offset_x = (ANCHO_BASE - (total_cols * tamano_casilla)) // 2
         offset_y = (ALTO_BASE - (total_filas * tamano_casilla)) // 2
         
-        # Selección de texturas según el nivel actual
         dict_tex_nivel = texturas_por_nivel.get(indice_nivel, texturas_por_nivel[0])
 
         if dict_texturas_escaladas.get("tamano") != tamano_casilla or dict_texturas_escaladas.get("nivel") != indice_nivel:
@@ -660,19 +683,19 @@ while ejecutando:
         color_bomba = getattr(configuracio, "COLOR_BOMBA", (0, 0, 0))
         color_enemigo = getattr(configuracio, "COLOR_ENEMIGO", (155, 89, 182))
         color_jugador = getattr(configuracio, "COLOR_JUGADOR", (241, 196, 15))
+        color_moneda = getattr(configuracio, "COLOR_MONEDA", (241, 196, 15))
+        color_moneda_borde = getattr(configuracio, "COLOR_MONEDA_BORDE", (211, 84, 0))
 
         # --- DIBUJO DE CASILLAS Y TEXTURAS DEL MAPA ---
         for fila_idx, fila in enumerate(mapa_actual):
             for col_idx, casilla in enumerate(fila):
                 rect = obtener_rect_casilla(fila_idx, col_idx, total_filas, total_cols)
                 
-                # Suelo base debajo de cada celda
                 if dict_texturas_escaladas.get("suelo"):
                     superficie_juego.blit(dict_texturas_escaladas["suelo"], rect)
                 else:
                     pygame.draw.rect(superficie_juego, color_suelo_actual, rect)
 
-                # Bloque Sólido (1)
                 if casilla == 1:
                     if dict_texturas_escaladas.get("fijo"):
                         superficie_juego.blit(dict_texturas_escaladas["fijo"], rect)
@@ -680,13 +703,20 @@ while ejecutando:
                         pygame.draw.rect(superficie_juego, color_fijo_actual, rect)
                         pygame.draw.rect(superficie_juego, (0, 0, 0), rect, 2)
 
-                # Bloque Rompible (2)
                 elif casilla == 2:
                     if dict_texturas_escaladas.get("destruible"):
                         superficie_juego.blit(dict_texturas_escaladas["destruible"], rect)
                     else:
                         pygame.draw.rect(superficie_juego, color_destruible_actual, rect)
                         pygame.draw.rect(superficie_juego, (100, 50, 20), rect, 2)
+
+        # --- DIBUJO DE MONEDAS (POWER-UPS INMUNES) EN EL SUELO ---
+        for m in monedas:
+            centro = m['rect'].center
+            radio = min(m['rect'].width, m['rect'].height) // 3
+            pygame.draw.circle(superficie_juego, color_moneda_borde, centro, radio)
+            pygame.draw.circle(superficie_juego, color_moneda, centro, max(1, radio - 2))
+            pygame.draw.circle(superficie_juego, (255, 255, 255), (centro[0] - radio // 3, centro[1] - radio // 3), max(1, radio // 4))
 
         # --- DIBUJO DE EXPLOSIONES ---
         for exp in explosiones:
@@ -749,7 +779,8 @@ while ejecutando:
             else:
                 pygame.draw.rect(superficie_juego, color_jugador, jugador_rect)
 
-        txt_nivel = fuente_juego.render(f"Nivel {indice_nivel + 1}", True, (255, 255, 255))
+        # --- HUD (INFORMACIÓN DE NIVEL Y ALCANCE) ---
+        txt_nivel = fuente_juego.render(f"Nivel {indice_nivel + 1}  |  Alcance Bomba: {alcance_bomba_jugador}", True, (255, 255, 255))
         superficie_juego.blit(txt_nivel, (15, 10))
 
         if nivel_completado:
